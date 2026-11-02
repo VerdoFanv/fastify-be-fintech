@@ -48,33 +48,18 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
 ---
+# Dedicated NodePort — jangan pakai Ingress catch-all di :80 (IP shared banyak project).
 apiVersion: v1
 kind: Service
 metadata:
   name: fintech-api
   namespace: fintech
 spec:
+  type: NodePort
   selector:
     app: fintech-api
   ports:
-    - port: 80
+    - name: http
+      port: 3000
       targetPort: 3000
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: fintech-api
-  namespace: fintech
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
-spec:
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: fintech-api
-                port:
-                  number: 80
+      nodePort: 30110

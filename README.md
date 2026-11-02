@@ -113,20 +113,24 @@ docker save fintech-api:local -o /tmp/fintech-api.tar
 sudo k3s ctr images import /tmp/fintech-api.tar
 ```
 
-### 4. Deploy API + Ingress (Traefik bawaan k3s)
+### 4. Deploy API (NodePort khusus — bukan Ingress :80)
+
+IP server biasanya dipakai banyak project. Fintech API **tidak** memakai Ingress catch-all di port 80; expose lewat **NodePort `30110`**.
 
 ```bash
 kubectl apply -f deploy/k3s/api-deployment.yaml
+# hapus Ingress lama jika pernah terpasang:
+kubectl -n fintech delete ingress fintech-api --ignore-not-found
 kubectl -n fintech rollout status deploy/fintech-api
-kubectl -n fintech get ingress,svc,pods
+kubectl -n fintech get svc,pods
 ```
 
-Port-forward alternatif:
+Akses:
 
 ```bash
-kubectl -n fintech port-forward svc/fintech-api 3000:80
-curl -s localhost:3000/health
-curl -s localhost:3000/ready
+curl -s http://<SERVER_IP>:30110/health
+curl -s http://<SERVER_IP>:30110/ready
+# contoh: http://192.168.0.155:30110/docs
 ```
 
 Jalankan migrasi sekali (job/manual) terhadap Postgres service, misalnya dari laptop dengan tunnel atau `kubectl run` + `prisma migrate deploy`.
