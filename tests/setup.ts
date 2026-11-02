@@ -1,0 +1,8 @@
+process.env.NODE_ENV = 'test'
+process.env.DATABASE_URL =
+  process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/fastify_be_fintech?schema=public'
+process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-jwt-secret-16+'
+process.env.API_KEY = process.env.API_KEY ?? 'test-api-key-16chars'
+process.env.AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID ?? 'test'
+process.env.AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY ?? 'test'
+process.env.S3_BUCKET = process.env.S3_BUCKET ?? 'test-bucket'

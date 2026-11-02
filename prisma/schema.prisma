@@ -1,0 +1,384 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum KycStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+enum AccountProductType {
+  CHECKING
+  SAVINGS
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum TransferStatus {
+  PENDING
+  POSTED
+  FAILED
+}
+
+enum KycDocumentType {
+  ID_CARD
+  SELFIE
+  PROOF_OF_ADDRESS
+}
+
+enum KycDocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CardType {
+  VIRTUAL
+  PHYSICAL
+}
+
+enum CardStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum LoanStatus {
+  APPLIED
+  APPROVED
+  DISBURSED
+  REPAYING
+  CLOSED
+  REJECTED
+}
+
+enum LoanScheduleStatus {
+  PENDING
+  PAID
+  OVERDUE
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+model User {
+  id               String             @id @default(cuid())
+  email            String             @unique
+  passwordHash     String
+  name             String?
+  role             Role               @default(CUSTOMER)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  customer         Customer?
+  idempotencyKeys  IdempotencyKey[]
+  webhookEndpoints WebhookEndpoint[]
+}
+
+model Customer {
+  id           String        @id @default(cuid())
+  userId       String        @unique
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName     String
+  phone        String?
+  kycStatus    KycStatus     @default(NONE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  accounts     Account[]
+  kycDocuments KycDocument[]
+  cards        Card[]
+  loans        Loan[]
+  transfersOut Transfer[]    @relation("TransferFromCustomer")
+  transfersIn  Transfer[]    @relation("TransferToCustomer")
+  fxExchanges  FxExchange[]
+
+  @@index([kycStatus])
+}
+
+model LedgerAccount {
+  id        String            @id @default(cuid())
+  code      String            @unique
+  name      String
+  type      LedgerAccountType
+  currency  String            @default("IDR")
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  lines     JournalLine[]
+  accounts  Account[]
+}
+
+model Account {
+  id              String             @id @default(cuid())
+  customerId      String
+  customer        Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  ledgerAccountId String             @unique
+  ledgerAccount   LedgerAccount      @relation(fields: [ledgerAccountId], references: [id])
+  productType     AccountProductType
+  currency        String             @default("IDR")
+  status          AccountStatus      @default(ACTIVE)
+  // Cached customer-facing balance; source of truth is JournalLine sums.
+  balance         Decimal            @default(0) @db.Decimal(19, 4)
+  accountNumber   String             @unique
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  transfersFrom   Transfer[]         @relation("TransferFromAccount")
+  transfersTo     Transfer[]         @relation("TransferToAccount")
+  cards           Card[]
+  loans           Loan[]
+  fxFrom          FxExchange[]       @relation("FxFromAccount")
+  fxTo            FxExchange[]       @relation("FxToAccount")
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model JournalEntry {
+  id          String        @id @default(cuid())
+  reference   String
+  description String?
+  postedAt    DateTime      @default(now())
+  createdAt   DateTime      @default(now())
+  lines       JournalLine[]
+  transfer    Transfer?
+  fxExchange  FxExchange?
+  loan        Loan?         @relation("LoanDisbursementEntry")
+
+  @@index([postedAt])
+  @@index([reference])
+}
+
+model JournalLine {
+  id              String        @id @default(cuid())
+  journalEntryId  String
+  journalEntry    JournalEntry  @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  ledgerAccountId String
+  ledgerAccount   LedgerAccount @relation(fields: [ledgerAccountId], references: [id])
+  // Exactly one of debit/credit should be > 0 per line (enforced in postJournal).
+  debit           Decimal       @default(0) @db.Decimal(19, 4)
+  credit          Decimal       @default(0) @db.Decimal(19, 4)
+  createdAt       DateTime      @default(now())
+
+  @@index([journalEntryId])
+  @@index([ledgerAccountId])
+}
+
+model Transfer {
+  id                String         @id @default(cuid())
+  fromCustomerId    String
+  fromCustomer      Customer       @relation("TransferFromCustomer", fields: [fromCustomerId], references: [id])
+  toCustomerId      String
+  toCustomer        Customer       @relation("TransferToCustomer", fields: [toCustomerId], references: [id])
+  fromAccountId     String
+  fromAccount       Account        @relation("TransferFromAccount", fields: [fromAccountId], references: [id])
+  toAccountId       String
+  toAccount         Account        @relation("TransferToAccount", fields: [toAccountId], references: [id])
+  amount            Decimal        @db.Decimal(19, 4)
+  currency          String         @default("IDR")
+  status            TransferStatus @default(PENDING)
+  description       String?
+  journalEntryId    String?        @unique
+  journalEntry      JournalEntry?  @relation(fields: [journalEntryId], references: [id])
+  idempotencyKey    String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([fromAccountId])
+  @@index([toAccountId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model KycDocument {
+  id           String            @id @default(cuid())
+  customerId   String
+  customer     Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type         KycDocumentType
+  status       KycDocumentStatus @default(PENDING)
+  key          String
+  bucket       String
+  contentType  String
+  size         Int
+  reviewNote   String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model Card {
+  id            String     @id @default(cuid())
+  customerId    String
+  customer      Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       Account    @relation(fields: [accountId], references: [id])
+  type          CardType
+  status        CardStatus @default(ACTIVE)
+  last4         String
+  expiryMonth   Int
+  expiryYear    Int
+  spendingLimit Decimal    @db.Decimal(19, 4)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([customerId])
+  @@index([accountId])
+}
+
+model Loan {
+  id                   String         @id @default(cuid())
+  customerId           String
+  customer             Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  disbursementAccountId String
+  disbursementAccount  Account        @relation(fields: [disbursementAccountId], references: [id])
+  principal            Decimal        @db.Decimal(19, 4)
+  interestRateAnnual   Decimal        @db.Decimal(8, 4)
+  termMonths           Int
+  status               LoanStatus     @default(APPLIED)
+  currency             String         @default("IDR")
+  journalEntryId       String?        @unique
+  journalEntry         JournalEntry?  @relation("LoanDisbursementEntry", fields: [journalEntryId], references: [id])
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  schedules            LoanSchedule[]
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model LoanSchedule {
+  id          String             @id @default(cuid())
+  loanId      String
+  loan        Loan               @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  installment Int
+  dueDate     DateTime
+  principal   Decimal            @db.Decimal(19, 4)
+  interest    Decimal            @db.Decimal(19, 4)
+  totalDue    Decimal            @db.Decimal(19, 4)
+  status      LoanScheduleStatus @default(PENDING)
+  paidAt      DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([loanId, installment])
+  @@index([loanId])
+  @@index([status])
+}
+
+model FxRate {
+  id           String   @id @default(cuid())
+  baseCurrency String
+  quoteCurrency String
+  rate         Decimal  @db.Decimal(19, 8)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([baseCurrency, quoteCurrency])
+}
+
+model FxExchange {
+  id             String        @id @default(cuid())
+  customerId     String
+  customer       Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  fromAccountId  String
+  fromAccount    Account       @relation("FxFromAccount", fields: [fromAccountId], references: [id])
+  toAccountId    String
+  toAccount      Account       @relation("FxToAccount", fields: [toAccountId], references: [id])
+  fromAmount     Decimal       @db.Decimal(19, 4)
+  toAmount       Decimal       @db.Decimal(19, 4)
+  rate           Decimal       @db.Decimal(19, 8)
+  journalEntryId String?       @unique
+  journalEntry   JournalEntry? @relation(fields: [journalEntryId], references: [id])
+  createdAt      DateTime      @default(now())
+
+  @@index([customerId])
+}
+
+model IdempotencyKey {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key            String
+  method         String
+  path           String
+  requestHash    String
+  responseStatus Int
+  responseBody   Json
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, key, method, path])
+  @@index([userId])
+}
+
+model WebhookEndpoint {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  url       String
+  secret    String
+  events    String[]
+  active    Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  deliveries WebhookDelivery[]
+
+  @@index([userId])
+}
+
+model WebhookDelivery {
+  id         String                @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint       @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event      String
+  payload    Json
+  status     WebhookDeliveryStatus @default(PENDING)
+  attempts   Int                   @default(0)
+  lastError  String?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  @@index([endpointId])
+  @@index([status])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorUserId  String?
+  action       String
+  resourceType String
+  resourceId   String
+  requestId    String?
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now())
+
+  @@index([action])
+  @@index([resourceType, resourceId])
+  @@index([createdAt])
+  @@index([requestId])
+}

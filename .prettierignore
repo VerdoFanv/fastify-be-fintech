@@ -1,0 +1,8 @@
+dist
+node_modules
+coverage
+src/generated
+package-lock.json
+*.md
+.env
+.env.*
