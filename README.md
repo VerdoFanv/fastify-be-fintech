@@ -135,7 +135,29 @@ curl -s http://<SERVER_IP>:30110/ready
 
 Jalankan migrasi sekali (job/manual) terhadap Postgres service, misalnya dari laptop dengan tunnel atau `kubectl run` + `prisma migrate deploy`.
 
-### 5. Observability di k3s (Helm one-liners)
+### 5. Rebuild / redeploy API (setelah `git push`)
+
+Di server, setelah kode sudah di-push ke remote:
+
+```bash
+cd ~/projects/fastify-be-fintech
+git pull --ff-only
+
+docker build -t fintech-api:local .
+docker save fintech-api:local -o /tmp/fintech-api.tar
+sudo k3s ctr images import /tmp/fintech-api.tar
+
+sudo k3s kubectl apply -f deploy/k3s/api-deployment.yaml
+sudo k3s kubectl -n fintech rollout restart deploy/fintech-api
+sudo k3s kubectl -n fintech rollout status deploy/fintech-api
+
+curl -sS http://127.0.0.1:30110/health
+curl -sS http://127.0.0.1:30110/ready
+```
+
+Kalau hanya ubah YAML (bukan kode app), cukup `git pull` + `sudo k3s kubectl apply -f deploy/k3s/` — tanpa rebuild image.
+
+### 6. Observability di k3s (Helm one-liners)
 
 ```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -145,7 +167,7 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack -n 
 
 Tambahkan Tempo/Loki sesuai kebutuhan (Grafana Helm charts). Arahkan `OTEL_EXPORTER_OTLP_ENDPOINT` di Secret ke collector di cluster, set `OTEL_ENABLED=true`.
 
-### 6. Troubleshooting singkat
+### 7. Troubleshooting singkat
 
 - **CrashLoop API**: `kubectl -n fintech logs deploy/fintech-api` — biasanya Secret/DB URL salah.
 - **PVC Pending**: pastikan k3s default storage class ada (`kubectl get sc`).
