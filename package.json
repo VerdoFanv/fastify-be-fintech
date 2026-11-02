@@ -26,7 +26,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1157.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0",
     "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.2.0",
     "@fastify/jwt": "^10.2.5",
     "@fastify/multipart": "^10.1.6",
     "@fastify/rate-limit": "^10.3.0",

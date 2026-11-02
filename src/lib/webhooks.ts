@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import type { Prisma, PrismaClient } from '@/generated/prisma/client.js'
+import { assertSafeWebhookUrl } from '@/lib/ssrf.js'
 
 /*
   At-least-once delivery (v1, in-process):
@@ -19,14 +20,17 @@ export async function attemptWebhookDelivery(
     return
   }
 
-  const body = JSON.stringify({
-    id: delivery.id,
-    event: delivery.event,
-    payload: delivery.payload,
-  })
-  const signature = createHmac('sha256', delivery.endpoint.secret).update(body).digest('hex')
-
   try {
+    // Re-verify safe URL right before fetch to protect against DNS rebinding
+    await assertSafeWebhookUrl(delivery.endpoint.url)
+
+    const body = JSON.stringify({
+      id: delivery.id,
+      event: delivery.event,
+      payload: delivery.payload,
+    })
+    const signature = createHmac('sha256', delivery.endpoint.secret).update(body).digest('hex')
+
     const response = await fetch(delivery.endpoint.url, {
       method: 'POST',
       headers: {

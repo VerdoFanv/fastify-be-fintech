@@ -1,4 +1,6 @@
 process.env.NODE_ENV = 'test'
+process.env.KAFKA_BROKERS = ''
+process.env.REDIS_URL = ''
 process.env.DATABASE_URL =
   process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/fastify_be_fintech?schema=public'
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-jwt-secret-16+'

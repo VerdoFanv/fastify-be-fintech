@@ -18,6 +18,7 @@ import uploadsRoutes from '@/modules/uploads/routes.js'
 import webhooksRoutes from '@/modules/webhooks/routes.js'
 import apiKeyPlugin from '@/plugins/api-key.js'
 import corsPlugin from '@/plugins/cors.js'
+import helmetPlugin from '@/plugins/helmet.js'
 import jwtPlugin from '@/plugins/jwt.js'
 import metricsPlugin from '@/plugins/metrics.js'
 import multipartPlugin from '@/plugins/multipart.js'
@@ -39,6 +40,7 @@ export async function buildApp() {
 
   await app.register(responseMetaPlugin)
   await app.register(requestIdPlugin)
+  await app.register(helmetPlugin)
   await app.register(corsPlugin)
   await app.register(apiKeyPlugin)
   await app.register(metricsPlugin)

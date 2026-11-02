@@ -1,11 +1,13 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { z } from 'zod'
 import { requireCustomerForUser } from '@/lib/authz.js'
-import { badRequest, forbidden } from '@/lib/errors.js'
+import { badRequest, conflict, forbidden } from '@/lib/errors.js'
 import {
+  acquireIdempotencyLock,
   findIdempotentResponse,
   hashRequestPayload,
   readIdempotencyKey,
+  releaseIdempotencyLock,
   saveIdempotentResponse,
 } from '@/lib/idempotency.js'
 import { trackProcess, withPerformance } from '@/lib/response-meta.js'
@@ -38,34 +40,43 @@ const transfersRoutes: FastifyPluginAsyncZod = async (fastify) => {
         throw badRequest('Idempotency-Key header is required for transfers')
       }
 
-      const requestHash = hashRequestPayload(request.body)
-      const cached = await findIdempotentResponse(fastify.prisma, {
-        userId: request.user.sub,
-        key: idemKey,
-        method: 'POST',
-        path: '/transfers',
-        requestHash,
-      })
-      if (cached) {
-        trackProcess(request, 'transfers.idempotent.hit')
-        return reply.status(cached.status as 201).send(cached.body as never)
+      const locked = await acquireIdempotencyLock(fastify.redis, request.user.sub, idemKey)
+      if (!locked) {
+        throw conflict('A transaction with this Idempotency-Key is currently in progress')
       }
 
-      const transfer = await createTransfer(fastify.prisma, customer.id, request.body, idemKey, {
-        actorUserId: request.user.sub,
-        requestId: request.requestId,
-      })
-      const body = withPerformance(request, { transfer: toTransferDto(transfer) })
-      await saveIdempotentResponse(fastify.prisma, {
-        userId: request.user.sub,
-        key: idemKey,
-        method: 'POST',
-        path: '/transfers',
-        requestHash,
-        responseStatus: 201,
-        responseBody: body,
-      })
-      return reply.status(201).send(body)
+      try {
+        const requestHash = hashRequestPayload(request.body)
+        const cached = await findIdempotentResponse(fastify.prisma, {
+          userId: request.user.sub,
+          key: idemKey,
+          method: 'POST',
+          path: '/transfers',
+          requestHash,
+        })
+        if (cached) {
+          trackProcess(request, 'transfers.idempotent.hit')
+          return await reply.status(cached.status as 201).send(cached.body as never)
+        }
+
+        const transfer = await createTransfer(fastify.prisma, customer.id, request.body, idemKey, {
+          actorUserId: request.user.sub,
+          requestId: request.requestId,
+        })
+        const body = withPerformance(request, { transfer: toTransferDto(transfer) })
+        await saveIdempotentResponse(fastify.prisma, {
+          userId: request.user.sub,
+          key: idemKey,
+          method: 'POST',
+          path: '/transfers',
+          requestHash,
+          responseStatus: 201,
+          responseBody: body,
+        })
+        return await reply.status(201).send(body)
+      } finally {
+        await releaseIdempotencyLock(fastify.redis, request.user.sub, idemKey)
+      }
     },
   )
 

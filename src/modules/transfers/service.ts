@@ -1,4 +1,4 @@
-import type { PrismaClient, Transfer } from '@/generated/prisma/client.js'
+import { Prisma, type PrismaClient, type Transfer } from '@/generated/prisma/client.js'
 import { badRequest, notFound } from '@/lib/errors.js'
 import { postJournal } from '@/lib/ledger.js'
 import { assertPositive, money, moneyToString } from '@/lib/money.js'
@@ -13,6 +13,15 @@ export function toTransferDto(transfer: Transfer) {
   }
 }
 
+interface LockedAccountRow {
+  id: string
+  customerId: string
+  ledgerAccountId: string
+  currency: string
+  status: string
+  balance: Prisma.Decimal
+}
+
 export async function createTransfer(
   prisma: PrismaClient,
   fromCustomerId: string,
@@ -25,28 +34,48 @@ export async function createTransfer(
     throw badRequest('Cannot transfer to the same account')
   }
 
-  const [fromAccount, toAccount] = await Promise.all([
-    prisma.account.findUnique({ where: { id: input.fromAccountId } }),
-    prisma.account.findUnique({ where: { id: input.toAccountId } }),
-  ])
-
-  if (!fromAccount || !toAccount) {
-    throw notFound('Account not found')
-  }
-  if (fromAccount.customerId !== fromCustomerId) {
-    throw badRequest('fromAccountId does not belong to the authenticated customer')
-  }
-  if (fromAccount.status !== 'ACTIVE' || toAccount.status !== 'ACTIVE') {
-    throw badRequest('Both accounts must be ACTIVE')
-  }
-  if (fromAccount.currency !== toAccount.currency) {
-    throw badRequest('Currency mismatch — use FX exchange for cross-currency')
-  }
-  if (fromAccount.balance.lt(amount)) {
-    throw badRequest('Insufficient funds')
-  }
-
+  /*
+    Core-banking ACID transfer:
+    1. Entire lookup, verification, and mutation execute inside one database transaction.
+    2. Deterministic sorted row locking (SELECT ... FOR UPDATE) on Account rows prevents deadlocks
+       (e.g. concurrent reverse transfers A->B and B->A lock min(A,B) first).
+    3. Row locks are acquired BEFORE tx.transfer.create to avoid PostgreSQL FK KEY SHARE lock inversion.
+    4. Balance & status checks run against freshly locked rows, eliminating stale dirty reads.
+  */
   const transfer = await prisma.$transaction(async (tx) => {
+    const sortedAccountIds = [input.fromAccountId, input.toAccountId].sort()
+    const lockedAccountsMap = new Map<string, LockedAccountRow>()
+
+    await sortedAccountIds.reduce<Promise<void>>(async (prev, accId) => {
+      await prev
+      const rows = await tx.$queryRaw<LockedAccountRow[]>`
+        SELECT id, "customerId", "ledgerAccountId", currency, status, balance
+        FROM "Account"
+        WHERE id = ${accId}
+        FOR UPDATE
+      `
+      if (rows.length === 0) {
+        throw notFound('Account not found')
+      }
+      lockedAccountsMap.set(accId, rows[0]!)
+    }, Promise.resolve())
+
+    const fromAccount = lockedAccountsMap.get(input.fromAccountId)!
+    const toAccount = lockedAccountsMap.get(input.toAccountId)!
+
+    if (fromAccount.customerId !== fromCustomerId) {
+      throw badRequest('fromAccountId does not belong to the authenticated customer')
+    }
+    if (fromAccount.status !== 'ACTIVE' || toAccount.status !== 'ACTIVE') {
+      throw badRequest('Both accounts must be ACTIVE')
+    }
+    if (fromAccount.currency !== toAccount.currency) {
+      throw badRequest('Currency mismatch — use FX exchange for cross-currency')
+    }
+    if (new Prisma.Decimal(fromAccount.balance).lt(amount)) {
+      throw badRequest('Insufficient funds')
+    }
+
     const pending = await tx.transfer.create({
       data: {
         fromCustomerId,

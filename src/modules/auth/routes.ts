@@ -53,7 +53,7 @@ const authRoutes: FastifyPluginAsyncZod = async (fastify) => {
     },
     async (request, reply) => {
       trackProcess(request, 'auth.login.authenticate')
-      const user = await authenticateUser(fastify.prisma, request.body)
+      const user = await authenticateUser(fastify.prisma, request.body, fastify.redis)
       trackProcess(request, 'auth.login.signJwt')
       const token = await reply.jwtSign({
         sub: user.id,

@@ -1,4 +1,5 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { env } from '@/config/env.js'
 
 let client: S3Client | null = null
@@ -37,8 +38,23 @@ export async function uploadObject(params: {
       Key: params.key,
       Body: params.body,
       ContentType: params.contentType,
+      // Enforce server-side encryption at rest (PCI-DSS & banking compliance baseline)
+      ServerSideEncryption: 'AES256',
     }),
   )
+}
+
+/**
+ * Generate a short-lived presigned URL (default 5 minutes) for accessing confidential KYC PII.
+ * Ensures the bucket remains fully private without public read exposure.
+ */
+export async function getPresignedKycUrl(key: string, expiresIn = 300): Promise<string> {
+  const s3 = getS3Client()
+  const command = new GetObjectCommand({
+    Bucket: env.S3_BUCKET,
+    Key: key,
+  })
+  return getSignedUrl(s3, command, { expiresIn })
 }
 
 export function objectUrl(key: string): string {

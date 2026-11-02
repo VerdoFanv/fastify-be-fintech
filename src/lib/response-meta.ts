@@ -1,5 +1,6 @@
 import type { FastifyRequest } from 'fastify'
 import { z } from 'zod'
+import { env } from '@/config/env.js'
 
 export const performanceSchema = z.object({
   durationMs: z.number(),
@@ -21,9 +22,11 @@ export function trackProcess(request: FastifyRequest, step: string): void {
 
 export function buildPerformance(request: FastifyRequest): PerformanceInfo {
   const durationMs = Number(process.hrtime.bigint() - request.startedAt) / 1e6
+  // Sanitize architectural info disclosure in production: hide internal trace steps
+  const isProd = env.NODE_ENV === 'production'
   return {
     durationMs: Math.round(durationMs * 1000) / 1000,
-    process: [...request.processSteps],
+    process: isProd ? [] : [...request.processSteps],
   }
 }
 

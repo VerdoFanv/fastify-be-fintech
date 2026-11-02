@@ -1,5 +1,6 @@
 import type { PrismaClient, WebhookDelivery, WebhookEndpoint } from '@/generated/prisma/client.js'
 import { notFound } from '@/lib/errors.js'
+import { assertSafeWebhookUrl } from '@/lib/ssrf.js'
 import { attemptWebhookDelivery } from '@/lib/webhooks.js'
 import type { RegisterWebhookBody } from './schemas.js'
 
@@ -8,6 +9,8 @@ export async function registerWebhook(
   userId: string,
   input: RegisterWebhookBody,
 ): Promise<WebhookEndpoint> {
+  await assertSafeWebhookUrl(input.url)
+
   return prisma.webhookEndpoint.create({
     data: {
       userId,
